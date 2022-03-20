@@ -7,6 +7,16 @@ Fitzgerald O, Dyer S, Zegers-Hochschild F, Keller, E, Adamson GD, Chambers GM. (
 
 ![Cross sectional comparison of the GII and ART utilisation](results/graphs/gii_art_xsectional.png)
 
+# Usage of the data
+
+The data in the repository may be reused with citation of the original source:
+
+* ICMART ...
+* UN ...
+* WB ...
+
+If using the final linked dataset please cite the current work.
+
 # Reproducing the analysis
 
 The following steps will reproduce the results present in the paper. Bear in mind 
