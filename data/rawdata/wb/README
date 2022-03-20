@@ -1,0 +1,212 @@
+Readme
+
+
+             EDUCATIONAL ATTAINMENT DATA, 1960-1985
+
+
+     The diskette contains the data set on educational attainment at various
+levels for the male and female population aged 25 and above. (See Barro, Robert
+J. and Jong-Wha Lee, "International Comparisons of Educational Attainment", NBER
+Working Paper No. 4349, 1993).  Out of the 129 countries constructed by Barro and
+Lee (1993), the data set includes 115 countries, which are in the sample
+countries of the Summers-Heston (1991) Mark 5.  Data are presented,
+quinquennially, for the years 1960-1985.
+
+     The diskette has two plain ASCII (text) files - SCHOOL1.RAW and
+SCHOOL2.RAW.  SCHOOL1.RAW contain data on schooling of the total population and
+SCHOOL2.RAW contain same data for the male and female population.  Each file has
+664 records (lines) of data, of which each line represents one country in one
+year.  All 108 countries have 6 lines of data (108 x 6 = 648) and the remaining
+7 countries have 18 records in total.  The seven countries, which have incomplete
+time series data on schooling, are Seychelles (Summers-Heston code 35), Dominica
+(52), St. Lucia (63), St. Vincent (64), Solomon Islands (135), Vanuatu (137), and
+Western Samoa (138).
+
+     In the SCHOOL1.RAW file, each line of data contains 14 pieces of
+information (4 descriptor variables plus 10 schooling data): the layout for each
+line is as follows:
+
+
+COLUMNS   CONTENT
+
+ 1 - 3    Summers-Heston Country Code (see attached country list)
+  6       Quotation mark (")
+ 7 - 21   Country name
+  22      Quotation mark (")
+23 - 26   Year
+27 - 28   Data source (1: census, 0: estimate)
+29 - 35   Percentage of "no schooling" in the total population
+36 - 42   Percentage of "primary schooling attained (incomplete +
+          complete)" in the total population.
+43 - 49   Percentage of "primary schooling complete" in the total pop.
+50 - 56   Percentage of "secondary schooling attained" in the total pop.
+57 - 63   Percentage of "secondary schooling complete" in the total pop.
+64 - 70   Percentage of "higher schooling attained" in the total pop.
+71 - 77   Percentage of "higher schooling complete" in the total pop.
+78 - 84   Average years of secondary schooling of the total pop.
+85 - 91   Average years of higher schooling of the total pop.
+92 - 98   Average years of total schooling of the total pop.
+
+
+     In the SCHOOL2.RAW file, each line of data contains 23 pieces of
+information (3 descriptor variables plus 10 male schooling data and 10 female
+schooling data): the layout for each line is as follows:
+
+COLUMNS   CONTENT
+
+ 1 - 3    Summers-Heston Country Code (see attached country list)
+ 4 - 7    Year
+ 8 - 9    Data source (1: census, 0: estimate)
+10 - 16   Percentage of "no schooling" in the male population.
+17 - 23   Percentage of "primary schooling attained" in the male pop.
+24 - 30   Percentage of "primary schooling complete" in the male pop.
+31 - 37   Percentage of "secondary schooling attained" in the male pop.
+38 - 44   Percentage of "secondary schooling complete" in the male pop.
+45 - 51   Percentage of "higher schooling attained" in the male pop.
+52 - 58   Percentage of "higher schooling complete" in the male pop.
+59 - 65   Average years of secondary schooling of the male pop.
+66 - 72   Average years of higher schooling of the male pop.
+73 - 79   Average years of total schooling of the male pop.
+80 - 86   Percentage of "no schooling" in the female population.
+87 - 93   Percentage of "primary schooling attained" in the female pop.
+94 -100   Percentage of "primary schooling complete" in the female pop.
+101-107   Percentage of "second. schooling attained" in the female pop.
+108-114   Percentage of "second. schooling complete" in the female pop.
+115-121   Percentage of "higher schooling attained" in the female pop.
+122-128   Percentage of "higher schooling complete" in the female pop.
+129-135   Average years of secondary schooling of the female pop.
+136-142   Average years of higher schooling of the female pop.
+143-149   Average years of total schooling of the female pop.
+
+
+              LIST OF COUNTRY
+___________________________________________________________
+Country code    Country name
+___________________________________________________________
+
+     1          Algeria
+     3          Benin
+     4          Botswana
+     7          Cameroon
+     9          Central African Rep.
+    12          Congo
+    13          Egypt
+    16          Gambia
+    17          Ghana
+    19          Guinea-Bissau
+    21          Kenya
+    22          Lesotho
+    23          Liberia
+    25          Malawi
+    26          Mali
+    28          Mauritius
+    30          Mozambique
+    31          Niger
+    33          Rwanda
+    34          Senegal
+    35          Seychelles
+    36          Sierra Leone
+    38          South africa
+    39          Sudan
+    40          Swaziland
+    41          Tanzania
+    42          Togo
+    43          Tunisia
+    44          Uganda
+    45          Zaire
+    46          Zambia
+    47          Zimbabwe
+    49          Barbados
+    50          Canada
+    51          Costa Rica
+    52          Dominica
+    53          Dominican Rep.
+    54          El Salvador
+    56          Guatemala
+    57          Haiti
+    58          Honduras
+    59          Jamaica
+    60          Mexico
+    61          Nicaragua
+    62          Panama
+___________________________________________________________
+Country code    Country name
+___________________________________________________________
+
+    63          St.Lucia
+    64          St.Vincent & Grens.
+    65          Trinidad & Tobago
+    66          United States
+    67          Argentina
+    68          Bolivia
+    69          Brazil
+    70          Chile
+    71          Colombia
+    72          Ecuador
+    73          Guyana
+    74          Paraguay
+    75          Peru
+    77          Uruguay
+    78          Venezuela
+    79          Afghanistan
+    80          Bahrain
+    81          Bangladesh
+    82          Myanmar (Burma)
+    84          Hong Kong
+    85          India
+    86          Indonesia
+    87          Iran, I.R. of
+    88          Iraq
+    89          Israel
+    90          Japan
+    91          Jordan
+    92          Korea
+    93          Kuwait
+    94          Malaysia
+    95          Nepal
+    97          Pakistan
+    98          Philippines
+   100          Singapore
+   101          Sri Lanka
+   102          Syria
+   103          Taiwan
+   104          Thailand
+   105          United Arab Emirates
+   106          Yemen, N.Arab
+   107          Austria
+   108          Belgium
+   109          Cyprus
+   110          Denmark
+   111          Finland
+   112          France
+   113          Germany, West
+   114          Greece
+
+___________________________________________________________
+Country code    Country name
+___________________________________________________________
+
+   115          Hungary
+   116          Iceland
+   117          Ireland
+   118          Italy
+   120          Malta
+   121          Netherlands
+   122          Norway
+   123          Poland
+   124          Portugal
+   125          Spain
+   126          Sweden
+   127          Switzerland
+   128          Turkey
+   129          United Kingdom
+   130          Yugoslavia
+   131          Australia
+   132          Fiji
+   133          New Zealand
+   134          Papua New Guinea
+   135          Solomon Islands
+   137          Vanuatu
+   138          Western Samoa
+___________________________________________________________
+

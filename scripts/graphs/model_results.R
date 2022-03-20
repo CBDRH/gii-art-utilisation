@@ -60,7 +60,7 @@ ggplot(standard) +
   labs(y = "Model coefficient\n(standardised)",x="") +
   geom_hline(yintercept = 0, linetype=2) +
   scale_color_discrete(name="Model") +
-  theme_bw(base_size=16) 
+  theme_bw(base_size=12) 
 ggsave("results/graphs/index_standard_results.png")
 
 ## component models
@@ -73,8 +73,8 @@ component_standard_partial <- readRDS("models/components_standard_l275_partial.r
 csc_coef <- cbind(component_standard_complete$beta,
                   component_standard_complete$beta-1.96*component_standard_complete$beta_se,
                   component_standard_complete$beta+1.96*component_standard_complete$beta_se)
-csf_coef <- cbind(component_standard_full$estimates[2:10,1],confint(component_standard_full)[2:10,])
-csp_coef <- cbind(component_standard_partial$estimates[2:10,1],confint(component_standard_partial)[2:10,])
+csf_coef <- cbind(component_standard_full$estimates[,1],confint(component_standard_full)[,])
+csp_coef <- cbind(component_standard_partial$estimates[,1],confint(component_standard_partial)[,])
 standard <- data.frame(rbind(csc_coef,csf_coef,csp_coef))
 names(standard) <- c("beta","lower","upper")
 standard$model <- c(rep("Complete cases\n(adjusted)",nrow(csc_coef)),
@@ -144,16 +144,16 @@ standard$model <- factor(standard$model,levels=c("Complete cases\n(unadjusted)",
 
 ggplot(standard) +
   geom_pointrange(aes(x=term,y=beta,ymin=lower,ymax=upper,col=model),
-                  position = position_dodge(width=0.2)) +
+                  position = position_dodge(width=0.2),size=0.4) +
   labs(y = "Model coefficient\n(standardised)",x="") +
   geom_hline(yintercept = 0, linetype=2) +
   scale_color_discrete(name="Model") +
-  theme_bw(base_size=16) +
+  theme_bw(base_size=12) +
   theme(axis.text.x = element_text(angle = -45, vjust = 0.6, hjust=0.0))
 ggsave("results/graphs/component_standard_results.png")
 
 # plot on exp scale
-tmp <- component_standard_partial$estimates[2:10,1:2]
+tmp <- component_standard_partial$estimates[,1:2]
 tmp <- data.frame(tmp)
 setDT(tmp,keep.rownames = "id")
 compute_exp <- function(beta,se,increase=TRUE) {
@@ -187,5 +187,12 @@ ggplot(tmp1,aes(x=change_var,y=100*(change_art-1)))+
   geom_ribbon(aes(ymin=100*(change_art_lower-1),ymax=100*(change_art_upper-1)),alpha=0.1)+
   labs(x = "Change in variable\n(SD units)",y="Change in ART utilisation (%)") +
   theme_bw(base_size=16) +
+  geom_hline(yintercept=0,linetype=2) +
   facet_wrap(~var,scales="free")
 ggsave("results/graphs/component_one_unit.png",height=8,width=9)
+
+setDT(tmp1)
+tmp1[abs(change_var) == 1.0,.(var,
+                              change_art=change_art-1,
+                              change_art_lower=change_art_lower-1,
+                              change_art_upper=change_art_upper-1)]

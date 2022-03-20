@@ -1,0 +1,497 @@
+---
+title: "Model for ART utilisation over time"
+subtitle: "Complete case analysis"
+author: "Oisin Fitzgerald"
+output:
+  html_document:
+    toc: true
+---
+
+```{r,echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE)
+```
+
+# Note
+
+The file `scripts/impute.R` needs to be be run before this file. However,
+knitting this file before running the imputations will result in `scripts/impute.R`
+being sourced (but you'll have a long wait). 
+
+# Introduction
+
+This document describes the longitudinal modeling of assisted reproductive 
+technology utilisation (ART) as a function of the United Nations produced 
+Human Development Index (HDI) and Gender Inequality Index (GII). Greater details on the 
+rationale for the study can be found in the main manuscript. 
+
+Summary of methods and findings:
+
+* Linear mixed effect model for log ART over time with covariates GII and HDI  
+* GII only available for year XXX so data restricted to these years.
+* GII related to log ART, increased GII related to increased ART utilisation. Effect marginally significant.
+
+```{r}
+impute_files <- paste0("../data/imputations/",
+                       c("implist11.RData","implist22.RData","implist33.RData"))
+if (!all(file.exists(impute_files))) {
+  source("../scripts/impute/impute.R")
+}
+```
+
+```{r doc_setup}
+### packages, functions
+# external
+library(lme4)
+library(mitml)
+library(MuMIn)
+library(ggplot2)
+library(data.table)
+
+# internal
+source("../src/tools/visualise.R")
+source("../src/tools/summarise.R")
+source("../src/tools/modelling.R")
+source("../src/tools/gii_comp.R")
+source("../src/lmm_ridge.R")
+
+### import data
+load("../data/imputations/implist11.RData")  # partial missing data imputated
+load("../data/imputations/implist22.RData")  # all missing data imputated
+load("../data/imputations/implist33.RData")  # pre 2009 missing data imputated
+```
+
+```{r}
+## function for preparing the imputed datasets
+scale <- function(x) (x - mean(x,na.rm=TRUE))/sd(x,na.rm = TRUE)
+preprocess_data <- function(x) {
+  # some renaming
+  names(x)[names(x) == "ln_adol_birth_rate_wb"] <- "ln_abr"
+  names(x)[names(x) == "ln_maternal_mortality_wb"] <- "ln_mmr"
+
+  ## missing reponse
+  incl <- !is.na(x$ln_art_utilisation)
+  # time
+  x$time_m <- as.numeric(tapply(x$time[incl],x$country[incl], mean))[x$country]
+  x$time_d <- x$time - x$time_m
+  # indices
+  x$gii <- calc_gii(exp(x$ln_mmr),
+                      exp(x$ln_abr),
+                      100*(x$female_lfp_wb),
+                      100*(x$male_lfp_wb),
+                      100*(x$EA_2T8_AG25T99_F),
+                      100*(x$EA_2T8_AG25T99_M),
+                      100*(x$women_parl_wb))
+  x$gii_m <- as.numeric(tapply(x$gii[incl],x$country[incl], mean))[x$country]
+  x$gii_d <- x$gii - x$gii_m
+  x$hdi_m <- as.numeric(tapply(x$hdi_un[incl],x$country[incl], mean))[x$country]
+  x$hdi_d <- x$hdi_un - x$hdi_m
+  # create labour and school gap
+  x$sch_gap <- x$EA_2T8_AG25T99_M - x$EA_2T8_AG25T99_F
+  # x$lab_gap_ilo <- x$lfp_male_ilo - x$lfp_female_ilo
+  x$lab_gap_wb <- x$male_lfp_wb - x$female_lfp_wb
+  # changes in components
+  x$sch_gap_m <- as.numeric(tapply(x$sch_gap[incl],x$country[incl], mean))[x$country]
+  x$sch_gap_d <- x$sch_gap - x$sch_gap_m
+  x$sch_gap_d2 <- x$sch_gap_d
+  x$sch_gap_d2[x$sch_gap_d2 < 0] <- 0
+  # x$lab_gap_ilo_m <- as.numeric(tapply(x$lab_gap_ilo[incl],x$country[incl], mean))[x$country]
+  # x$lab_gap_ilo_d <- x$lab_gap_ilo - x$lab_gap_ilo_m
+  # x$lab_gap_ilo_d2 <- x$lab_gap_ilo_d
+  # x$lab_gap_ilo_d2[x$lab_gap_ilo_d2 < 0] <- 0
+  x$lab_gap_wb_m <- as.numeric(tapply(x$lab_gap_wb[incl],x$country[incl], mean))[x$country]
+  x$lab_gap_wb_d <- x$lab_gap_wb - x$lab_gap_wb_m
+  x$women_parl_wb_m <- as.numeric(tapply(x$women_parl_wb[incl],x$country[incl], mean))[x$country]
+  x$women_parl_wb_d <- x$women_parl_wb - x$women_parl_wb_m
+  x$ln_abr_m <- as.numeric(tapply(x$ln_abr[incl],x$country[incl], mean))[x$country]
+  x$ln_abr_d <- x$ln_abr - x$ln_abr_m
+  x$ln_mmr_m <- as.numeric(tapply(x$ln_mmr[incl],x$country[incl], mean))[x$country]
+  x$ln_mmr_d <- x$ln_mmr - x$ln_mmr_m
+  x$ln_gni_m <- as.numeric(tapply(x$ln_gni_wb[incl],x$country[incl], mean))[x$country]
+  x$ln_gni_d <- x$ln_gni_wb - x$ln_gni_m
+  # health-wealth-edu
+  x$hwe <- 0.3*x$ln_gni_wb+0.8*x$mean_sch_un+0.3*x$ln_abr-0.4*x$ln_mmr
+  x$hwe_m <- as.numeric(tapply(x$hwe[incl],x$country[incl], mean))[x$country]
+  x$hwe_d <- x$hwe - x$hwe_m
+  # outlier
+  x$out1 <- rep(0, nrow(x))
+  x$out1[x$sch_gap > 0.2] <- 1
+  # scale some data
+  x$time1  <- scale(x$time)
+  x$ln_abr1 <- scale(x$ln_abr)
+  x$women_parl_wb1 <- scale(x$women_parl_wb)
+  x$ln_mmr1 <- scale(x$ln_mmr)
+  x$sch_gap1 <- scale(x$sch_gap)
+  x$lab_gap_wb1 <- scale(x$lab_gap_wb)
+  x$life_expect_wb1 <- scale(x$life_expect_wb)
+  x$ln_gni_wb1 <- scale(x$ln_gni_wb)
+  x$mean_sch_un1 <- scale(x$mean_sch_un)
+  x$gii <- scale(x$gii)
+  x$hdi_un <- scale(x$hdi_un)
+  x$time <- scale(x$time)
+  x$ln_art_utilisation1 <- x$ln_art_utilisation - mean(x$ln_art_utilisation,na.rm=TRUE)
+  # return data
+  x
+}
+
+implist11 <- lapply(implist11, preprocess_data)
+class(implist11) <- c("mitml.list","list")
+implist22 <- lapply(implist22, preprocess_data)
+class(implist22) <- c("mitml.list","list")
+implist33 <- lapply(implist33, preprocess_data)
+class(implist33) <- c("mitml.list","list")
+```
+
+# Index Models
+
+## Covariate imputation
+
+Covariates imputed.
+
+### Standard formulation
+
+```{r}
+# standard random effects
+mmpi01 <- with(implist11, {
+  lmer(ln_art_utilisation~1+time+gii+hdi_un+(1|country),REML=TRUE)
+})
+res_mmpi01 <- testEstimates(mmpi01, extra.pars=TRUE)
+saveRDS(res_mmpi01,file="../models/index_standard_partial.rds")
+
+# parameter estimates
+knitr::kable(res_mmpi01$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmpi01),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmpi01$extra.pars,digits=3,
+             caption="Variance component estimates")
+
+tab <- cbind(res_mmpi01$estimates,confint(res_mmpi01))
+fwrite(x=as.data.table(tab,keep.rownames = TRUE),file="../results/tables/index_standard_partial.csv")
+```
+
+### Decomposition formulation
+
+```{r}
+# between-within decomposition
+mmpi02 <- with(implist11, {
+  lmer(ln_art_utilisation~1+
+         time_d+
+         time_m+
+         gii_d+
+         gii_m+
+         hdi_d+
+         hdi_m+
+         (1|country),REML=TRUE)
+})
+res_mmpi02 <- testEstimates(mmpi02, extra.pars=TRUE)
+saveRDS(res_mmpi02,file="../models/index_decomposition_partial.rds")
+
+# parameter estimates
+knitr::kable(res_mmpi02$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmpi02),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmpi02$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+GII only
+
+```{r}
+# between-within decomposition
+model <- with(implist11, {
+  lmer(ln_art_utilisation~1+
+         time+
+         gii_d+
+         gii_m+
+         (1|country),REML=TRUE)
+})
+res_model <- testEstimates(model, extra.pars=TRUE)
+
+# parameter estimates
+knitr::kable(res_model$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_model),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_model$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+## Covariates and outcome imputation
+
+### Standard formulation
+
+```{r}
+# standard random effects
+mmfi01 <- with(implist22, {
+  lmer(ln_art_utilisation~1+
+         time+
+         gii+
+         hdi_un+
+         (1|country),REML=TRUE)
+})
+res_mmfi01 <- testEstimates(mmfi01, extra.pars=TRUE)
+saveRDS(res_mmfi01,file="../models/index_standard_full.rds")
+
+# parameter estimates
+knitr::kable(res_mmfi01$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmfi01),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmfi01$extra.pars,digits=3,
+             caption="Variance component estimates")
+             
+tab <- cbind(res_mmfi01$estimates,confint(res_mmfi01))
+fwrite(x=as.data.table(tab,keep.rownames = TRUE),file="../results/tables/index_standard_full.csv")
+
+```
+
+### Decomposition formulation
+
+GII + HDI
+
+```{r}
+# between-within decomposition
+mmfi02 <- with(implist22, {
+  lmer(ln_art_utilisation~1+
+         time+
+         gii_d+
+         gii_m+
+         hdi_d+
+         hdi_m+
+         (1|country),REML=TRUE)
+})
+res_mmfi02 <- testEstimates(mmfi02, extra.pars=TRUE)
+saveRDS(res_mmfi02,file="../models/index_decomposition_full.rds")
+
+# parameter estimates
+knitr::kable(res_mmfi02$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmfi02),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmfi02$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+GII only
+
+```{r}
+# between-within decomposition
+model <- with(implist22, {
+  lmer(ln_art_utilisation~1+
+         time+
+         gii_d+
+         gii_m+
+         (1|country),REML=TRUE)
+})
+res_model <- testEstimates(model, extra.pars=TRUE)
+
+# parameter estimates
+knitr::kable(res_model$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_model),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_model$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+# Component Models
+
+## Covariate imputation
+
+### Standard formulation - no shrinkage on fixed effects
+
+#### Unscaled
+
+```{r}
+# model
+mmcpi01 <- with(implist11,
+               lmer(ln_art_utilisation ~ 
+                 1+time+
+               ln_abr+
+               ln_mmr+
+               women_parl_wb+
+               sch_gap+
+                 mean_sch_un+
+               lab_gap_wb+
+                life_expect_wb+
+               ln_gni_wb+
+               (1|country)))
+res_mmcpi01 <- testEstimates(mmcpi01, extra.pars=TRUE)
+
+# parameter estimates
+knitr::kable(res_mmcpi01$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmcpi01),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmcpi01$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+### Scaled
+
+```{r}
+# model
+mmcpi01s <- with(implist11,
+               lmer(ln_art_utilisation1 ~ -1+
+               time1+
+               ln_abr1+
+               ln_mmr1+
+               women_parl_wb1+
+               sch_gap1+
+               lab_gap_wb1+
+               mean_sch_un1+
+               life_expect_wb1+
+               ln_gni_wb1+
+               (1|country)))
+res_mmcpi01s <- testEstimates(mmcpi01s, extra.pars=TRUE)
+
+# parameter estimates
+knitr::kable(res_mmcpi01s$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmcpi01s),digits=3,caption="Model parameter 95% CI")
+
+# variance components
+knitr::kable(res_mmcpi01s$extra.pars,digits=3,
+             caption="Variance component estimates")
+```
+
+### Standard formulation - L2 shrinkage on fixed effects
+
+```{r}
+Xvars1 <- c("time1","ln_abr1", "women_parl_wb1", "ln_mmr1",
+          "sch_gap1", "lab_gap_wb1", "life_expect_wb1", "ln_gni_wb1", "mean_sch_un1")
+Xvars1_labels <- c("Year","Adol. birth rate","Women in parliament (%)","Maternal mort. ratio",
+                   "Gender highschool gap","Gender LFP gap","Life expectancy",
+                   "log GNI","Av. years of schooling")
+art_dat <- implist11[[1]]
+Lambda <- seq(1,1500,length.out = 20)
+effective_df <- numeric(length=length(Lambda))
+X <- as.matrix(na.omit(art_dat[,..Xvars1]))
+for (i in 1:length(effective_df)) {
+  effective_df[i] <- sum(diag(X %*% solve(t(X) %*% X + diag(Lambda[i],length(Xvars1))) %*% t(X)))
+}
+
+betas <- data.frame(beta=numeric(length = length(Lambda)*length(Xvars1)),
+                    var=rep(Xvars1,length(Lambda)),
+                    lambda=rep(Lambda,each=length(Xvars1)),
+                    effective_df=rep(effective_df,each=length(Xvars1)))
+nvars <- length(Xvars1)
+
+for (i in 1:length(Lambda)) {
+  m_tmp <- lmm_fit("ln_art_utilisation1",Xvars1,"country",art_dat,lambda=Lambda[i])
+  betas$beta[((i-1)*nvars + 1):(i*nvars)] <- m_tmp$beta
+}
+setDT(betas)
+```
+
+```{r}
+ggplot(betas,aes(x=lambda,y=effective_df)) +
+  geom_point() +
+  theme_bw(base_size=12) +
+  labs(x=expression(lambda),y="Effective degrees of freedom")
+```
+
+```{r, fig.height=4, fig.width=8}
+sec_el <- seq(1, length(Lambda), 2)
+ggplot(betas,aes(x=(lambda),y=beta,col=var)) + 
+  geom_line(size=1) +
+  geom_hline(yintercept = 0.0) +
+  geom_vline(xintercept = 75.0,linetype=2) +
+  theme_bw(base_size=12) +
+  scale_x_continuous(breaks=Lambda[sec_el],labels = round(effective_df,2)[sec_el]) + 
+  scale_color_discrete(labels=Xvars1_labels,name="") +
+  theme(axis.text.x = element_text(angle=45,vjust=0.5),panel.grid=element_blank()) +
+  labs(x="Effective number of parameters",y=expression(beta))
+```
+
+Only consider scaled, else interpretation confusing.
+
+**These results are for the component analysis main model**
+
+```{r}
+# model
+f <- function(x) {
+  mod <- lmm_fit("ln_art_utilisation1",Xvars1,"country",x,lambda=75.0)
+  mod
+}
+mmcpi01s <- lapply(implist11,f)
+
+beta <- lapply(mmcpi01s,function(x) x$beta)
+beta_var <- lapply(mmcpi01s,function(x) x$beta_se^2)
+res_mmcpi01s <- testEstimates(qhat=beta,uhat=beta_var)
+saveRDS(res_mmcpi01s,file="../models/components_standard_l275_partial.rds")
+
+# parameter estimates
+knitr::kable(res_mmcpi01s$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmcpi01s),digits=3,caption="Model parameter 95% CI")
+```
+
+```{r}
+tab <- cbind(res_mmcpi01s$estimates,confint(res_mmcpi01s))
+fwrite(x=as.data.table(tab,keep.rownames = TRUE),file="../results/tables/component_standard_l275_partial.csv")
+```
+
+
+## Covariates and outcome imputation
+
+### Standard formulation - L2 shrinkage on fixed effects
+
+**These results are for the component analysis (sensitivity analysis, full imputation)**
+
+```{r}
+# model
+f <- function(x) {
+  mod <- lmm_fit("ln_art_utilisation1",Xvars1,"country",x,lambda=75.0)
+  mod
+}
+mmcfi01s <- lapply(implist22,f)
+
+beta <- lapply(mmcfi01s,function(x) x$beta)
+beta_var <- lapply(mmcfi01s,function(x) x$beta_se^2)
+res_mmcfi01s <- testEstimates(qhat=beta,uhat=beta_var)
+saveRDS(res_mmcfi01s,file="../models/components_standard_l275_full.rds")
+
+# parameter estimates
+knitr::kable(res_mmcfi01s$estimates,digits=3,
+             caption="Model parameter estimates")
+
+# confidence intervals
+knitr::kable(confint(res_mmcfi01s),digits=3,caption="Model parameter 95% CI")
+
+```
+
+
+```{r}
+tab <- cbind(res_mmcfi01s$estimates,confint(res_mmcfi01s))
+fwrite(x=as.data.table(tab,keep.rownames = TRUE),file="../results/tables/component_standard_l275_full.csv")
+```
+
+
+

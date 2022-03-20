@@ -1,0 +1,270 @@
+---
+title: "EDA for ART utilisation over time"
+output: html_document
+---
+
+```{r,echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE)
+```
+
+
+```{r}
+### packages, functions
+# external
+library(ggplot2)
+library(data.table)
+library(gridExtra)
+library(lme4)
+# internal
+source("../src/tools/visualise.R")
+source("../src/tools/summarise.R")
+
+
+### import data
+art_dat <- readRDS("../data/art_covar_2002_2014.rds")
+setDT(art_dat)
+
+# missing region
+#  [1] Belarus    Benin      Bolivia    Ghana      IvoryCoast Malta      Mauritius  Morocco    Nigeria    Paraguay  
+# [11] Russia     Senegal    SouthKorea
+
+art_dat[country == "SouthKorea",region := "Asia"]
+art_dat[country == "Senegal",region := "Africa"]
+art_dat[country == "Russia",region := "Europe"]
+art_dat[country == "Paraguay",region := "LatinAmerica"]
+art_dat[country == "Nigeria",region := "Africa"]
+art_dat[country == "Morocco",region := "Africa"]
+art_dat[country == "Mauritius",region := "Africa"]
+art_dat[country == "Malta",region := "Europe"]
+art_dat[country == "IvoryCoast",region := "Africa"]
+art_dat[country == "Ghana",region := "Africa"]
+art_dat[country == "Bolivia",region := "LatinAmerica"]
+art_dat[country == "Benin",region := "Africa"]
+art_dat[country == "Belarus",region := "Europe"]
+
+```
+
+```{r}
+# country exclusions
+countries_remove <- c("SaudiArabia", "UnitedArabEmirates", "Jordan", "Lebanon", "Bahrain",
+                       "SyrianArabRepublic", "Morocco",
+                       "Tunisia", "Libya", "Palestine,Stateof", "Egypt",
+                       "Taiwan")
+art_dat[,exclude := fifelse(country %in% countries_remove,TRUE,FALSE,FALSE)]
+art_dat[,country := factor(country)]
+
+# middle east, north africa variable
+me_na <- c("SaudiArabia", "UnitedArabEmirates", "Jordan", "Lebanon", "Bahrain",
+                       "SyrianArabRepublic", "Morocco",
+                       "Tunisia", "Libya", "Palestine,Stateof", "Egypt")
+art_dat[,me_na := fifelse(country %in% me_na,1,0,0)]
+```
+
+# Introduction
+
+This document contains graphs.
+
+# Missing Data
+
+Missing where ART is not measured - i.e. relevant for the complete case and partial imputation models.
+
+The variables actually used are:
+
+* adol_birth_rate_wb
+* ...
+
+```{r}
+cols <- names(art_dat)
+missing_prop <- function(x) sum(is.na(x)) / length(x)
+knitr::kable(art_dat[!is.na(ln_art_utilisation),sapply(.SD,missing_prop),.SDcols=cols],
+             col.names = c("missing prop"))
+
+```
+
+# GII and ART utilisation
+
+The regression analysis predicting log ART utilisation in 2014
+
+```{r}
+model <- lm(log(art_utilisation)~gii_un,
+            data=art_dat[year == 2014 & exclude == FALSE])
+tab <- cbind(broom::tidy(model),broom::confint_tidy(model))
+fwrite(tab,file="../results/tables/art_gii_2014.csv")
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p1 <- ggplot(art_dat[year == 2014],aes(y=art_utilisation,x=gii_un)) +
+  geom_point() +
+  scale_y_log10() +
+  geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+    labs(x = "Gender Inequality Index",y="ART utilisation") +
+    annotate('text',x=0.15,y=10,label=r2,parse=TRUE)
+ggsave(file="../results/graphs/gii_art_xsectional.png",p1,height=4,width=5) 
+
+art_change <- data.table(coef(lmList(ln_art_utilisation ~ year | country,
+                                     data=art_dat[exclude==FALSE])),
+                         keep.rownames=TRUE)
+names(art_change) <- c("country","intercept","art")
+gii_change <- data.table(coef(lmList(gii_un ~ year | country,
+                                     data=art_dat[exclude==FALSE])),keep.rownames=TRUE)
+names(gii_change) <- c("country","intercept","gii")
+change_df <- merge(art_change,gii_change,by="country")
+model <- lm(art~gii,
+            data=change_df[art < 0.3])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p2 <- ggplot(change_df,aes(y=art,x=gii)) +
+  geom_point() +
+  theme_bw(base_size = 14) +
+  coord_cartesian(xlim=c(-0.02,0.001),ylim=c(-0.001,0.3)) + 
+  geom_smooth(method=MASS::rlm,se=FALSE) +
+  labs(x = "Change in Gender Inequality Index",y="Change in log ART utilisation")
+  #annotate('text',x=-0.015,y=0.0,label=r2,parse=TRUE)
+ggsave(file="../results/graphs/gii_art_longitudinal.png",p2,height=4,width=5) 
+
+p1
+p2
+```
+
+```{r}
+change_df_region <- merge(change_df,unique(art_dat[,.(country,region)]),by="country")
+ggplot(change_df_region,aes(y=art,x=gii)) +
+  geom_point() +
+  theme_bw(base_size = 14) +
+  scale_y_continuous(limits=c(-0.001,0.3)) + 
+  coord_cartesian(xlim=c(-0.02,0.001)) + 
+  geom_smooth(method="lm",se=FALSE) +
+  labs(x = "Change in Gender Inequality Index",y="Change in log ART utilisation") +
+  facet_wrap(~region)
+```
+
+# GII components and ART utilisation
+
+All
+
+```{r}
+model <- lm(log(art_utilisation)~log(maternal_mortality_wb),
+            data=art_dat[year == 2014 & exclude == FALSE])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p1 <- ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=maternal_mortality_wb)) +
+  geom_point() +
+  scale_y_log10() +
+  scale_x_log10() +
+  geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+  labs(x = "Maternal mortality ratio",y="ART utilisation",title="A") +
+  #geom_label(data=NULL,aes(x=10,y=10,label=r2))
+    annotate('text',x=10,y=10,label=r2,parse=TRUE)
+
+
+model <- lm(log(art_utilisation)~log(adol_birth_rate_wb),
+            data=art_dat[year == 2014 & exclude == FALSE])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p2 <- ggplot(art_dat[year == 2014& exclude == FALSE],
+             aes(y=art_utilisation,x=adol_birth_rate_wb)) +
+  geom_point() +
+  scale_y_log10() +
+    scale_x_log10() +
+    geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+    labs(x = "Adolescent birth rate",y="ART utilisation",title="B") +
+  #geom_label(data=NULL,aes(x=10,y=10,label=r2))
+    annotate('text',x=10,y=10,label=r2,parse=TRUE)
+
+model <- lm(log(art_utilisation)~female_lfp_un,
+            data=art_dat[year == 2014 & exclude == FALSE])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p3 <- ggplot(art_dat[year == 2014& exclude == FALSE],aes(y=art_utilisation,x=female_lfp_un)) +
+  geom_point() +
+  scale_y_log10() +
+    geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+      labs(x = "Female labour force participation (%)",y="ART utilisation",title="E") +
+  #geom_label(data=NULL,aes(x=40,y=10,label=r2))
+    annotate('text',x=40,y=10,label=r2,parse=TRUE)
+
+model <- lm(log(art_utilisation)~women_parl_wb,
+            data=art_dat[year == 2014 & exclude == FALSE])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p4 <- ggplot(art_dat[year == 2014& exclude == FALSE],aes(y=art_utilisation,x=100*women_parl_wb)) +
+  geom_point() +
+  scale_y_log10() +
+    geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+      labs(x = "Female share of parliament (%)",y="ART utilisation",title="D") +
+  #geom_label(data=NULL,aes(x=40,y=10,label=r2))
+    annotate('text',x=40,y=10,label=r2,parse=TRUE)
+
+model <- lm(log(art_utilisation)~highschl_perc_un,
+            data=art_dat[year == 2014 & exclude == FALSE])
+r2 <- paste0("~Linear~fit:~R^2==",round(summary(model)$r.squared,3))
+p5 <- ggplot(art_dat[year == 2014& exclude == FALSE],aes(y=art_utilisation,x=100*highschl_perc_un)) +
+  geom_point() +
+  scale_y_log10() +
+    geom_smooth(method="lm",se=FALSE) +
+  theme_bw(base_size = 14) +
+    labs(x = "Female educational attainment",y="ART utilisation",title="C") +
+  #geom_label(data=NULL,aes(x=80,y=10,label=r2))
+    annotate('text',x=80,y=10,label=r2,parse=TRUE)
+
+
+g <- arrangeGrob(p1,p2,p5,p4,p3,ncol=2)
+ggsave(file="../results/graphs/components_xsection.png", g,height=10,width=8) 
+
+p1
+p2
+p5
+p4
+p3
+```
+
+By region
+
+```{r}
+art_dat[region == "MiddleEast",region := "Europe and\nMediterranean"]
+art_dat[region == "Europe",region := "Europe and\nMediterranean"]
+art_dat[region == "LatinAmerica",region := "Latin America"]
+art_dat[region == "NorthAmerica",region := "North America"]
+art_dat[region == "AustraliaNewZealand",region := "Oceania"]
+
+ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=maternal_mortality_wb)) +
+  geom_point() +
+  scale_y_log10() +
+  scale_x_log10() +
+  theme_bw(base_size = 14) +
+  facet_wrap(~region,scale="free") +
+  labs(x = "Maternal mortality ratio",y="ART utilisation")
+ggsave(file="../results/graphs/components_region_mmr.png",height=4,width=6) 
+
+ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=adol_birth_rate_wb)) +
+  geom_point() +
+  scale_y_log10() +
+  scale_x_log10() +
+  theme_bw(base_size = 14) +
+  facet_wrap(~region,scale="free") +
+  labs(x = "Adolescent birth rate",y="ART utilisation")
+ggsave(file="../results/graphs/components_region_abr.png",height=4,width=6) 
+
+ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=female_lfp_un)) +
+  geom_point() +
+  scale_y_log10() +
+  theme_bw(base_size = 14) +
+  facet_wrap(~region,scale="free") +
+  labs(x = "Female labour force participation (%)",y="ART utilisation")
+ggsave(file="../results/graphs/components_region_lfp.png",height=4,width=6) 
+
+ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=100*women_parl_wb)) +
+  geom_point() +
+  scale_y_log10() +
+  theme_bw(base_size = 14) +
+  facet_wrap(~region,scale="free") +
+  labs(x = "Female share of parliament (%)",y="ART utilisation")
+ggsave(file="../results/graphs/components_region_parl.png",height=4,width=6) 
+
+ggplot(art_dat[year == 2014 & exclude == FALSE],aes(y=art_utilisation,x=100*highschl_perc_un)) +
+  geom_point() +
+  scale_y_log10() +
+  theme_bw(base_size = 14) +
+  facet_wrap(~region,scale="free") +
+  labs(x = "Female educational attainment (%)",y="ART utilisation")
+ggsave(file="../results/graphs/components_region_school.png",height=4,width=6) 
+```
+

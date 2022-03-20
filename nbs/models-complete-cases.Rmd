@@ -1,0 +1,839 @@
+---
+title: "Model for ART utilisation over time"
+subtitle: "Complete case analysis"
+author: "Oisin Fitzgerald"
+output:
+  html_document:
+    toc: true
+---
+
+```{r,echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE,message=FALSE,warning=FALSE)
+```
+
+# Introduction
+
+This document describes the longitudinal modeling of assisted reproductive 
+technology utilisation (ART) as a function of the United Nations produced 
+Human Development Index (HDI) and Gender Inequality Index (GII). Greater details on the 
+rationale for the study can be found in the main manuscript. 
+
+Summary of methods and findings:
+
+* Linear mixed effect model for log ART over time with covariates GII and HDI  
+* GII only available for year XXX so data restricted to these years.
+* GII related to log ART, increased GII related to increased ART utilisation. Effect marginally significant.
+
+```{r}
+### packages, functions
+# external
+library(lme4)
+library(MuMIn)
+library(ggplot2)
+library(data.table)
+library(broom.mixed)
+# internal
+source("../src/tools/visualise.R")
+source("../src/tools/summarise.R")
+source("../src/tools/modelling.R")
+source("../src/lmm_ridge.R")
+
+if(!dir.exists("../models")) {
+  dir.create("../models")
+}
+plot_resid_against_x <- function(x,augment_model) {
+  x <- substitute(x)
+  ggplot(augment_model) +
+    geom_point(aes_(y=quote(.resid),x=x)) +
+    geom_smooth(aes_(y=quote(.resid),x=x)) +
+    geom_label(data=augment_model[abs(.resid)>1],
+               aes_(y=quote(.resid + 0.2),x=x,label=quote(country))) +
+    theme_bw(base_size = 14)
+}
+
+
+qqplot_ranef <- function(model) {
+  ranef_model <- data.table(ranef(model)$country,keep.rownames = TRUE)
+  names(ranef_model) <- c("country","intercept")
+  ggplot(ranef_model) +
+    geom_qq(aes(sample=intercept)) +
+    geom_abline(slope = 1,intercept=0,linetype=2,col="red") +
+    theme_bw(base_size = 14)
+}
+
+plot_cooks_dist <- function(augment_model) {
+  ggplot(augment_model,aes(x=.fitted,y=.cooksd)) +
+  geom_point() +
+  geom_label(data=augment_model[abs(.cooksd)>0.5],
+             aes(y=(.cooksd + 0.2),x=(.fitted),label=(country)),alpha=0.5) +
+  theme_bw(base_size=16)
+}
+
+marginal_r2 <- function(model,df,vars,y) {
+  X <- as.matrix(df[,vars,with=FALSE])
+  yhat <- X %*% model$beta
+  msk <- !is.na(yhat) & !is.na(y)
+  var(yhat[msk]) / var(y[msk])
+}
+
+
+### import data
+art_dat <- readRDS("../data/art_covar_2002_2014.rds")
+setDT(art_dat)
+```
+
+# Data
+
+There is more detailed description of the data used in the following files:  
+
+* ...
+
+Several countries are removed from the analysis due to poor data quality (or missing data in the case of Taiwan)
+
+```{r}
+# country exclusions
+countries_remove <- c("SaudiArabia", "UnitedArabEmirates", "Jordan", "Lebanon", "Bahrain",
+                       "SyrianArabRepublic", "Morocco",
+                       "Tunisia", "Libya", "Palestine,Stateof", "Egypt",
+                       "Taiwan")
+art_dat[,exclude := fifelse(country %in% countries_remove,TRUE,FALSE,FALSE)]
+art_dat[,country := factor(country)]
+
+# middle east, north africa variable
+me_na <- c("SaudiArabia", "UnitedArabEmirates", "Jordan", "Lebanon", "Bahrain",
+                       "SyrianArabRepublic", "Morocco",
+                       "Tunisia", "Libya", "Palestine,Stateof", "Egypt")
+art_dat[,me_na := fifelse(country %in% me_na,1,0,0)]
+```
+
+```{r}
+write.csv(art_dat[exclude == FALSE & !is.na(art_utilisation),.N,by=.(country,region)],
+          "../results/countries_raw.csv")
+```
+
+# Index models
+
+We create two linear mixed effect models for log ART utilisation. Both include 
+random intercept terms for country and time, the HDI and GII as variables. The second 
+model differs in decomposing the variable effects into within country and between country
+effects. The rationale for this was to assess whether there was evidence that increases
+in GII within a country over the timeframe of our dataset were associated with increased 
+ART utilisation. 
+
+We note the following:  
+
+* The GII is only available for the years: XXX, 
+* Several countries are missing outcome data for some of the relevant year.
+* Time is years, centered so that 0 is XXXX.
+* The GII and HDI are between 0 and 1.
+
+```{r}
+# prepare data - scaling
+scale <- function(x) (x - mean(x,na.rm=TRUE))/sd(x,na.rm = TRUE)
+art_dat[,time := scale(time)]
+art_dat[,gii_un := scale(gii_un)]
+art_dat[,hdi_un := scale(hdi_un)]
+art_dat[,ln_art_utilisation1 := ln_art_utilisation - mean(ln_art_utilisation,na.rm=TRUE)]
+```
+
+## Standard formulation
+
+Model: log ART utilisation = time in years + GII + HDI + random country intercept
+
+```{r}
+# model
+mm01 <- lmer(ln_art_utilisation ~ 1+time+gii_un+hdi_un+(1|country), 
+             data = art_dat[exclude==FALSE])
+saveRDS(mm01,file="../models/index_standard_complete.rds")
+cat("R2: ",MuMIn::r.squaredGLMM(mm01),"\n")
+
+# model details
+augment_mm01 <- augment(mm01)
+setDT(augment_mm01)
+
+# model fit
+knitr::kable(tidy(mm01),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm01),digits = 3,caption = "Model fit statistics")
+knitr::kable(confint(mm01),digits=3,caption = "Model 95% intervals")
+
+fwrite(x = cbind(tidy(mm01)[1:4,],confint(mm01)[3:6,]),file = "../results/tables/index_standard_complete.csv")
+
+```
+
+On the exp scale:
+
+```{r}
+knitr::kable(tidy(mm01),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(mm01),digits=3,caption = "Model 95% intervals")
+```
+
+Plot on the exp scale:
+
+```{r}
+mm01f <- fixef(mm01)["gii_un"]
+mm01vc <- vcov(mm01)["gii_un","gii_un"]
+change_gii_un <- seq(0,-1,by=-0.1)
+df <- data.frame(change_gii_un,
+                 change_art=exp(change_gii_un*mm01f),
+                 change_art_lower=exp(change_gii_un*(mm01f-2*mm01vc)),
+                 change_art_upper=exp(change_gii_un*(mm01f+2*mm01vc)))
+ggplot(df,aes(x=change_gii_un,y=change_art)) +
+  geom_line() +
+  scale_y_continuous(breaks=seq(1,2,by=0.25),labels=seq(0,100,by=25)) +
+  geom_ribbon(aes(ymin=change_art_lower,ymax=change_art_upper),alpha=0.1)+
+  labs(x = "Change in Gender Inequality Index\n(SD units)",y="Change in ART utilisation (%)") +
+  theme_bw(base_size=14)
+ggsave("../results/graphs/change_gii_adjusted.png")
+```
+
+```{r}
+knitr::kable(df)
+```
+
+The quantile-quantile plot for the model appears reasonable.
+
+```{r, fig.height=4, fig.width=8}
+qqplot_ranef(mm01)
+```
+
+There is evidence of outliers or poor model fit for a couple of south/central American countries.
+
+```{r, fig.height=4, fig.width=8}
+plot_resid_against_x(time,augment_mm01)
+plot_resid_against_x(`.fitted`,augment_mm01)
+plot_resid_against_x(hdi_un,augment_mm01)
+plot_resid_against_x(gii_un,augment_mm01)
+```
+
+Influence
+
+```{r}
+plot_cooks_dist(augment_mm01)
+```
+
+## Standard formulation - each index individually (unadjusted)
+
+Model: log ART utilisation = time in years + GII + random country intercept
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation ~ 1+time+gii_un+hdi_un+(1|country), 
+             data = art_dat[exclude==FALSE])
+saveRDS(model,file="../models/index_gii_complete.rds")
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+```
+
+Model: log ART utilisation = time in years + HDI + random country intercept
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation ~ 1+time+hdi_un+(1|country), 
+             data = art_dat[exclude==FALSE])
+saveRDS(model,file="../models/index_hdi_complete.rds")
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+```
+
+## Decomposition formulation
+
+This model decompose effects effects into within country and between country effects. 
+effects. The resulting between and within coefficients can be compared to assess whether 
+it is reasonable to assume that the between and within country effects are similar, which 
+can be used to reason about causation of the effect etc. 
+We originally decomposed time as it is measured
+unevenly between countries (due to missing outcome data) and this is recommended in the 
+literature, however it results in non-identifiability.
+
+In general the previous model is a better fit, with better model fit statistics and 
+a hypothesis test that the between and within effects of GII are equivalent being 
+non-significant. 
+
+```{r}
+# between within decomposition
+art_dat[,time_m := mean(time,na.rm=TRUE),by=country]
+art_dat[,time_d := time - time_m]
+art_dat[,gii_m := mean(gii_un,na.rm=TRUE),by=country]
+art_dat[,gii_d := gii_un - gii_m]
+art_dat[,hdi_m := mean(hdi_un,na.rm=TRUE),by=country]
+art_dat[,hdi_d := hdi_un - hdi_m]
+
+# model
+mm02 <- lmer(ln_art_utilisation ~ 1+time+gii_d+gii_m+hdi_d+hdi_m+(1|country),data = art_dat[exclude==FALSE])
+saveRDS(mm02,file="../models/index_decomposition_complete.rds")
+cat("R2: ",MuMIn::r.squaredGLMM(mm02),"\n")
+
+# model details
+augment_mm02 <- augment(mm02)
+setDT(augment_mm02)
+
+# model fit
+knitr::kable(tidy(mm02),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm02),digits = 3,caption = "Model fit statistics")
+knitr::kable(confint(mm02),digits=3,caption = "Model 95% intervals")
+
+
+```
+
+
+As before, the quantile-quantile plot for the model appears reasonable.
+
+```{r, fig.height=4, fig.width=8}
+qqplot_ranef(mm02)
+```
+
+As before, there is evidence of outliers or poor model fit for a couple of south/central American countries.
+
+```{r, fig.height=4, fig.width=8}
+plot_resid_against_x(`.fitted`,augment_mm02)
+plot_resid_against_x(hdi_m,augment_mm02)
+plot_resid_against_x(gii_m,augment_mm02)
+plot_resid_against_x(hdi_d,augment_mm02)
+plot_resid_against_x(gii_d,augment_mm02)
+```
+
+Influence
+
+```{r}
+plot_cooks_dist(augment_mm02)
+```
+
+GII only
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation ~ 1+time+gii_d+gii_m+(1|country),data = art_dat[exclude==FALSE])
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+```
+
+```{r, fig.height=4, fig.width=8}
+qqplot_ranef(model)
+```
+
+```{r, fig.height=4, fig.width=8}
+plot_resid_against_x(`.fitted`,augment_model)
+plot_resid_against_x(gii_m,augment_model)
+plot_resid_against_x(gii_d,augment_model)
+```
+
+Influence
+
+```{r}
+plot_cooks_dist(augment_model)
+```
+
+**This table appears in paper supplements**
+
+```{r}
+tab <- tidy(model)
+tab <- cbind(tab, broom::confint_tidy(model))
+data.table::fwrite(tab,file = "../results/tables/gii_only_longitudinal.csv")
+```
+
+# Component models
+
+HDI
+* Life expectancy
+* Expected years of schooling
+* Mean years of schooling 
+* GNI per capita
+
+GII 
+* Maternal mortality ratio
+* Adolescent birth rate  
+* Female/male population with at least secondary education 
+* Female/male share of parliamentary seats  
+* Female/male labour force participation  
+
+## Correlation
+
+Strong correlations between the components.
+
+```{r, fig.height=4, fig.width=8}
+vars <- c("ln_adol_birth_rate_wb", "women_parl_wb", "ln_maternal_mortality_wb",
+          "school_gap", "labour_gap_wb", "life_expect_wb", "ln_gni_wb", "mean_sch_un")
+cor_gii_hdi <- cor(art_dat[,..vars], use="pair", method="pearson")
+rownames(cor_gii_hdi) <- colnames(cor_gii_hdi) <- c("Adol. birth rate", "Women in parliament (%)", 
+                                                "Maternal mort. ratio","Gender highschool gap", 
+                                                "Gender LFP gap","Life expectancy", 
+                                                "log GNI", "Av. years of schooling")
+corrplot::corrplot(cor_gii_hdi, method = "square", type = "upper", order = "FPC", tl.srt = 50, 
+                   diag = FALSE, tl.col = "black", tl.cex = 1.3)
+```
+
+Poorly condition matrix.
+
+```{r}
+X <- as.matrix(na.omit(art_dat[,..vars]))
+eigen_XtX <- eigen(t(X) %*% X)$values
+cat("max/min eigenval of XtX:",max(eigen_XtX)/min(eigen_XtX))
+```
+
+The cumulative sum of the eigenvalues of the correlation matrix dividing by their sum.
+
+```{r}
+vars <- c("time","ln_adol_birth_rate_wb", "women_parl_wb", "ln_maternal_mortality_wb",
+          "school_gap", "labour_gap_wb", "life_expect_wb", "ln_gni_wb", "mean_sch_un")
+cor_gii_hdi <- cor(art_dat[,..vars], use="pair", method="pearson")
+eigen_cor_gii_hdi <- eigen(cor_gii_hdi)
+df_plot <- data.frame(var_exp = cumsum(eigen_cor_gii_hdi$values)/sum(eigen_cor_gii_hdi$values),
+                      comp = 1:length(vars))
+ggplot(df_plot,aes(y=100*var_exp,x=comp)) +
+  geom_point() +
+  geom_line() +
+  theme_bw(base_size=12) +
+  labs(x = "Number of components",y = "Variance explained (%)") +
+  scale_x_continuous(breaks=1:length(vars))
+```
+
+## Standard formulation - no shrinkage on fixed effects
+
+This standard LMM model is overly influence by multicollinearity, fitted below for reference.
+
+```{r}
+# model
+mc01 <- lmer(ln_art_utilisation ~ 1+
+               time+
+               ln_adol_birth_rate_wb+
+               ln_maternal_mortality_wb+
+               women_parl_wb+
+               school_gap+
+               labour_gap_wb+
+               mean_sch_un+
+               life_expect_wb+
+               ln_gni_wb+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+saveRDS(mc01,file="../models/component_standard_l20_complete.rds")
+cat("R2: ",MuMIn::r.squaredGLMM(mc01),"\n")
+
+# model details
+augment_mc01 <- augment(mc01)
+setDT(augment_mc01)
+
+# model fit
+knitr::kable(tidy(mc01),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(mc01),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(mc01),digits = 3,caption = "Model fit statistics")
+```
+
+## Standard formulation - L2 shrinkage on fixed effects
+
+In order to deal with the collinearity we apply $L2$ shrinkage to the fixed effects
+(as is already done to the random effects). We scale the data so the covariates
+are zero mean and standard deviation one. We also mean centre the outcome to remove 
+the need for an intercept term. 
+
+```{r}
+# prepare data - scaling
+scale <- function(x) (x - mean(x,na.rm=TRUE))/sd(x,na.rm = TRUE)
+#art_dat[,time1 := scale(time)]
+art_dat[,time1 := time]
+art_dat[,ln_adol_birth_rate_wb1 := scale(ln_adol_birth_rate_wb)]
+art_dat[,women_parl_wb1 := scale(women_parl_wb)]
+art_dat[,ln_maternal_mortality_wb1 := scale(ln_maternal_mortality_wb)]
+art_dat[,school_gap1 := scale(school_gap)]
+art_dat[,labour_gap_wb1 := scale(labour_gap_wb)]
+art_dat[,life_expect_wb1 := scale(life_expect_wb)]
+art_dat[,ln_gni_wb1 := scale(ln_gni_wb)]
+art_dat[,mean_sch_un1 := scale(mean_sch_un)]
+
+Xvars1 <- c("time1","ln_adol_birth_rate_wb1", "women_parl_wb1", "ln_maternal_mortality_wb1",
+          "school_gap1", "labour_gap_wb1", "life_expect_wb1", "ln_gni_wb1", "mean_sch_un1")
+Xvars1_labels <- c("Year","Adol. birth rate","Women in parliament (%)","Maternal mort. ratio",
+                   "Gender highschool gap","Gender LFP gap","Life expectancy",
+                   "log GNI","Av. years of schooling")
+art_dat[,ln_art_utilisation1 := ln_art_utilisation - mean(ln_art_utilisation,na.rm=TRUE)]
+```
+
+Firstly, we refit the unpenalised model to the scaled data.
+
+```{r}
+# model
+mc01s <- lmer(ln_art_utilisation1 ~ -1+
+               time1+
+               ln_adol_birth_rate_wb1+
+               ln_maternal_mortality_wb1+
+               women_parl_wb1+
+               school_gap1+
+               labour_gap_wb1+
+               mean_sch_un1+
+               life_expect_wb1+
+               ln_gni_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(mc01s),"\n")
+
+# model details
+augment_mc01s<- augment(mc01s)
+setDT(augment_mc01s)
+
+# model fit
+knitr::kable(tidy(mc01s),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(mc01s),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(mc01s),digits = 3,caption = "Model fit statistics")
+```
+
+Fitting the model over various size of $\lambda$ in the $L2$ penalty $\lambda\| \beta \|^2$ 
+gives the results shown in the graph below. A $\lambda$ corresponding to an effective 
+number of parameters of 5 appears a reasonable choice in stabilising the coefficient values. 
+
+```{r}
+Lambda <- seq(1,1500,length.out = 20)
+effective_df <- numeric(length=length(Lambda))
+X <- as.matrix(na.omit(art_dat[exclude==FALSE,..Xvars1]))
+for (i in 1:length(effective_df)) {
+  effective_df[i] <- sum(diag(X %*% solve(t(X) %*% X + diag(Lambda[i],length(Xvars1))) %*% t(X)))
+}
+
+betas <- data.frame(beta=numeric(length = length(Lambda)*length(Xvars1)),
+                    var=rep(Xvars1,length(Lambda)),
+                    lambda=rep(Lambda,each=length(Xvars1)),
+                    effective_df=rep(effective_df,each=length(Xvars1)))
+nvars <- length(Xvars1)
+
+for (i in 1:length(Lambda)) {
+  m_tmp <- lmm_fit("ln_art_utilisation1",Xvars1,"country",art_dat[exclude==FALSE],lambda=Lambda[i])
+  betas$beta[((i-1)*nvars + 1):(i*nvars)] <- m_tmp$beta
+}
+setDT(betas)
+```
+
+The relationship between the penalty and effective degrees of freedom.
+
+```{r}
+ggplot(betas,aes(x=lambda,y=effective_df)) +
+  geom_point() +
+  theme_bw(base_size=12) +
+  labs(x=expression(lambda),y="Effective degrees of freedom")
+```
+
+```{r, fig.height=4, fig.width=8}
+sec_el <- seq(1, length(Lambda), 2)
+ggplot(betas,aes(x=(lambda),y=beta,col=var)) + 
+  geom_line(size=1) +
+  geom_hline(yintercept = 0.0) +
+  geom_vline(xintercept = 100.0,linetype=2) +
+  theme_bw(base_size=12) +
+  scale_x_continuous(breaks=Lambda[sec_el],labels = round(effective_df,2)[sec_el]) + 
+  scale_color_discrete(labels=Xvars1_labels,name="") +
+  theme(axis.text.x = element_text(angle=45,vjust=0.5),panel.grid=element_blank()) +
+  labs(x="Effective number of parameters",y=expression(beta))
+```
+
+Then we refit the penalised model. 
+
+**These results are for the component sensitivity analysis (full cases) model**
+
+```{r}
+mc01p <- lmm_fit("ln_art_utilisation1",Xvars1,"country",art_dat[exclude==FALSE],lambda=75.0)
+saveRDS(mc01p,file="../models/component_standard_l275_complete.rds")
+mc01p_confint <- data.frame(beta=mc01p$beta,
+                            se=mc01p$beta_se,
+                            lower=mc01p$beta-2*mc01p$beta_se,
+                            upper=mc01p$beta+2*mc01p$beta_se)
+knitr::kable(mc01p_confint,digits=3,caption = "Model 95% intervals")
+fwrite(x = as.data.table(mc01p_confint,keep.rownames = TRUE),file = "../results/tables/component_standard_l275_complete.csv")
+```
+
+The marginal R^2
+
+```{r}
+marginal_r2(mc01p,art_dat,Xvars1,art_dat$ln_art_utilisation1)
+```
+
+## Model for each component
+
+### Adol Birth Rate
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               ln_adol_birth_rate_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_ln_adol_birth_rate_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### ln_maternal_mortality_wb
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               ln_maternal_mortality_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_ln_maternal_mortality_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### women_parl_wb
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               women_parl_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_women_parl_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### school_gap
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               school_gap1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_school_gap1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### labour_gap_wb
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               labour_gap_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_labour_gap_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### mean_sch_un
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               mean_sch_un1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_mean_sch_un1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### life_expect_wb
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               life_expect_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_life_expect_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+### ln_gni_wb
+
+```{r}
+# model
+model <- lmer(ln_art_utilisation1 ~ 1+
+               time1+
+               ln_gni_wb1+
+               (1|country),
+             data = art_dat[exclude==FALSE],
+             REML=FALSE)
+cat("R2: ",MuMIn::r.squaredGLMM(model),"\n")
+saveRDS(model,file="../models/component_ln_gni_wb1_complete.rds")
+
+# model details
+augment_model <- augment(model)
+setDT(augment_model)
+
+# model fit
+knitr::kable(tidy(model),digits = 3,caption = "Model parameter estimates")
+knitr::kable(confint(model),digits=3,caption = "Model 95% intervals")
+knitr::kable(glance(model),digits = 3,caption = "Model fit statistics")
+```
+
+# Appendix A: additional models
+
+## Standard formulation with excluded countries
+
+A better model with the excluded countries included adds a Middle East/North Africa
+indicator variable. Note that due to the high variability of (within country) ART rates in the excluded
+countries these results may not be reliable. 
+
+Model: log ART utilisation = time in years + GII + HDI + Middle East/North Africa + random country intercept
+
+```{r}
+# model
+mm01a <- lmer(ln_art_utilisation ~ 1+time+gii_un+hdi_un+me_na+(1|country), data = art_dat)
+cat("R2: ",MuMIn::r.squaredGLMM(mm01a),"\n")
+
+# model details
+augment_mm01a <- augment(mm01a)
+setDT(augment_mm01a)
+
+# model fit
+knitr::kable(tidy(mm01a),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm01a),digits = 3,caption = "Model fit statistics")
+```
+
+## Decomposition formulation with excluded countries
+
+Note that due to the high variability of (within country) ART rates in the excluded
+countries these results may not be reliable. 
+
+```{r}
+# model
+mm02a <- lmer(ln_art_utilisation ~ 1+time+gii_d+gii_m+hdi_d+hdi_m+me_na+(1|country),data = art_dat)
+cat("R2: ",MuMIn::r.squaredGLMM(mm02a),"\n")
+
+# model details
+augment_mm02a <- augment(mm02a)
+setDT(augment_mm02a)
+
+# model fit
+knitr::kable(tidy(mm02a),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm02a),digits = 3,caption = "Model fit statistics")
+```
+
+## Standard formulation with Turkey excluded
+
+Turkey was an influential outlier above - effect of removing.
+
+```{r}
+# model
+mm01a <- lmer(ln_art_utilisation ~ 1+time+gii_un+hdi_un+me_na+(1|country), 
+              data = art_dat[!country=="Turkey" & exclude == FALSE])
+cat("R2: ",MuMIn::r.squaredGLMM(mm01a),"\n")
+
+# model details
+augment_mm01a <- augment(mm01a)
+setDT(augment_mm01a)
+
+# model fit
+knitr::kable(tidy(mm01a),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm01a),digits = 3,caption = "Model fit statistics")
+```
+
+## Decomposition formulation with Turkey excluded
+
+Turkey was an influential outlier above - effect of removing.
+
+```{r}
+# model
+mm02a <- lmer(ln_art_utilisation ~ 1+time+gii_d+gii_m+hdi_d+hdi_m+me_na+(1|country),
+              data = art_dat[!country=="Turkey" & exclude == FALSE])
+cat("R2: ",MuMIn::r.squaredGLMM(mm02a),"\n")
+
+# model details
+augment_mm02a <- augment(mm02a)
+setDT(augment_mm02a)
+
+# model fit
+knitr::kable(tidy(mm02a),digits = 3,caption = "Model parameter estimates")
+knitr::kable(glance(mm02a),digits = 3,caption = "Model fit statistics")
+```
+
+
