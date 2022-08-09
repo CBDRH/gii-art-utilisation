@@ -3,19 +3,13 @@
 
 This is the code repository for the research paper:
 
-Fitzgerald O, Dyer S, Zegers-Hochschild F, Keller, E, Adamson GD, Chambers GM. (forthcoming). Gender inequality and utilisation of assisted reproductive technology: an international cross-sectional and longitudinal analysis
+Fitzgerald O, Dyer S, Zegers-Hochschild F, Keller, E, Adamson GD, Chambers GM. (forthcoming). Gender inequality and utilisation of assisted reproductive technology: an international cross-sectional and longitudinal analysis.
 
 ![Cross sectional comparison of the GII and ART utilisation](results/graphs/gii_art_xsectional.png)
 
 # Usage of the data
 
-The data in the repository may be reused with citation of the original source:
-
-* ICMART ...
-* UN ...
-* WB ...
-
-If using the final linked dataset please cite the current work.
+The data in the repository may be reused. To cite the original data source (UN, WB, ICMART), see the manuscript. If using the final linked dataset please cite the current work.
 
 # Reproducing the analysis
 
@@ -27,11 +21,18 @@ that as part of the analysis consists of Markov Chain Monte Carlo base imputatio
 If you are using RStudio or another GUI reproducing the analysis step by step 
 may be the preferred method. To do so, run these files in the order described below.
 
+First, set up the environment (install required packages). We use the package `renv` for reproducibility of the package environment.
+
+```
+install.packages("renv")
+renv::restore()
+```
+
 Set up the analysis dataset:
 ```
 scripts/install_packages.R
-scripts/art_data.R
-scripts/art_data_plus_covariates.R
+scripts/create_data/art_data.R
+scripts/create_data/art_data_plus_covariates.R
 ```
 
 Exploratory data analysis:
@@ -54,20 +55,3 @@ Graph the fitted models (note the models are saved in `models/`:
 ```
 scripts/model_results.R
 ```
-
-## Batch/bash scripts
-
-In order to reproduce the analysis in a single step open the project directory and run the following:
-
-### Windows CMD
-
-This assumes you have R in your path (i.e. can open CMD and type R to start an R
-session).
-
-```
-run.bat
-```
-
-### Linux
-
-Coming soon...

@@ -81,6 +81,29 @@ knitr::kable(art_dat[!is.na(ln_art_utilisation),sapply(.SD,missing_prop),.SDcols
 
 ```
 
+# High level description
+
+```{r}
+# years
+art_dat[exclude==FALSE & !is.na(art_utilisation),.N,by=year] %>%
+  ggplot(aes(x = year,y = N)) +
+  geom_line() +
+  geom_label(aes(label=N)) +
+  scale_x_continuous(breaks=2002:2014) +
+  labs(title="ART utilisation: # countries")
+```
+
+
+```{r}
+# years
+art_dat[exclude==FALSE & !is.na(gii_un),.N,by=year] %>%
+  ggplot(aes(x = year,y = N)) +
+  geom_line() +
+  geom_label(aes(label=N)) +
+  scale_x_continuous(breaks=2002:2014) +
+  labs(title="GII: # countries")
+```
+
 # GII and ART utilisation
 
 The regression analysis predicting log ART utilisation in 2014
